@@ -13,7 +13,7 @@ import generateToken from "../utils/generateToken";
 import { Resend } from "resend";
 import { render } from "@react-email/render";
 import OtpEmail from "../emails/templates/OtpEmail";
-import { checkOtp, sendOtp } from "../utils/phoneVerification";
+import { sendOtp } from "../utils/phoneVerification";
 
 // const resend = new Resend("re_xxxxxxxxx");
 const resend = new Resend(process.env.RESEND_API_KEY);
@@ -27,7 +27,7 @@ const userRegistration = async (
     const { name, email, password, phone, dob } = RegisterUserSchema.parse(
       req.body
     );
-    const address = AddressSchema.parse(req.body.address);
+    // const address = AddressSchema.parse(req.body.address);
 
     const tempSession = await prisma.tempSession.findFirst({
       where: {
@@ -51,16 +51,28 @@ const userRegistration = async (
     if (existingUser) {
       return res.status(400).json({ message: "User already exists" });
     }
-    const user = await prisma.user.create({
-      data: {
-        name,
-        email,
-        password: await bcrypt.hash(password, 10),
-        phone,
-        dob: new Date(dob),
-        addresses: { create: address },
-      },
-    });
+    const userData: any = {
+      name,
+      password: await bcrypt.hash(password, 10),
+      dob: new Date(dob),
+    };
+
+    if (email) {
+      userData.email = email;
+      userData.emailVerified = true;
+    }
+    if (phone) {
+      userData.phone = phone;
+      userData.phoneVerified = true;
+    }
+
+    if (!userData.email && !userData.phone) {
+      return res
+        .status(400)
+        .json({ message: "Either email or phone is required" });
+    }
+
+    const user = await prisma.user.create({ data: userData });
 
     const authToken = generateToken(user.id, "1h");
     const refreshToken = generateToken(user.id, "7d");
@@ -191,11 +203,16 @@ const verifyUserOtp = async (
 
 const userLogin = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { email, password } = RegisterUserSchema.pick({
-      email: true,
-      password: true,
-    }).parse(req.body);
-    const user = await prisma.user.findUnique({ where: { email } });
+    const { email } = RegisterUserSchema.pick({ email: true }).parse(req.body);
+    const { password } = RegisterUserSchema.pick({ password: true }).parse(
+      req.body
+    );
+    const { phone } = RegisterUserSchema.pick({ phone: true }).parse(req.body);
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [{ email }, { phone }],
+      },
+    });
     if (!user) {
       return res.status(400).json({ message: "User not found" });
     }
@@ -290,29 +307,38 @@ const sendOtpMobile = async (
   next: NextFunction
 ) => {
   const { phone } = TempSessionSchema.pick({ phone: true }).parse(req.body);
-  // console.log("phoneeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", phone);
   try {
     const existigSession = await prisma.tempSession.findFirst({
       where: {
         phone,
-        verified: true,
       },
     });
-    if (existigSession) {
+    if (existigSession && existigSession.verified) {
       return res.status(400).json({ message: "User already exists" });
     }
-    const result = await sendOtp(phone);
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const result = await sendOtp(phone, otp);
     console.log("resultttttttttttttt", result);
     if (!result) {
       return res.status(400).json({ message: "Failed to send OTP" });
     } else {
-      await prisma.tempSession.create({
-        data: {
-          phone,
-          otp: "123456",
-          otpExpires: new Date(Date.now() + 1000 * 60 * 5),
-        },
-      });
+      if (!existigSession) {
+        await prisma.tempSession.create({
+          data: {
+            phone,
+            otp,
+            otpExpires: new Date(Date.now() + 1000 * 60 * 5),
+          },
+        });
+      } else {
+        await prisma.tempSession.update({
+          where: { id: existigSession.id },
+          data: {
+            otp,
+            otpExpires: new Date(Date.now() + 1000 * 60 * 5),
+          },
+        });
+      }
     }
     return res
       .status(200)
@@ -346,7 +372,8 @@ const verifyOtpMobile = async (
     if (!existigSession) {
       return res.status(400).json({ message: "Invalid or already used OTP" });
     }
-    const isOtpValid = await checkOtp(phone, otp);
+    const isOtpValid = existigSession.otp === otp;
+    console.log("isOtpValid", isOtpValid);
     if (!isOtpValid) {
       return res.status(400).json({ message: "Invalid OTP" });
     }

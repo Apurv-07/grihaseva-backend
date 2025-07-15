@@ -18,20 +18,20 @@ export const TempSessionSchema = z.object({
   otpExpires: z.date(),
 });
 
-export const RegisterUserSchema = z.object({
-  name: z.string().min(1),
-  email: z.string().email(),
-  password: z.string().min(6),
-  phone: z.string().min(10),
-  dob: z.string().refine(
-    (val) => {
-      const date = new Date(val);
-      return !isNaN(date.getTime());
-    },
-    {
-      message: "Invalid date format. Must be a valid ISO date string.",
-    }
-  ),
-  profilePic: z.string().url().optional(),
-  address: z.union([AddressSchema, z.array(AddressSchema)]),
-});
+export const RegisterUserSchema = z
+  .object({
+    name: z.string().min(1),
+    email: z.string().email().optional(),
+    password: z.string().min(6),
+    phone: z.string().min(10).optional(),
+    dob: z.string().refine(
+      (val) => {
+        const date = new Date(val);
+        return !isNaN(date.getTime());
+      },
+      {
+        message: "Invalid date format. Must be a valid ISO date string.",
+      }
+    ),
+    profilePic: z.string().url().optional(),
+  })
